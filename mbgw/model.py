@@ -43,7 +43,7 @@ class sph_eval(object):
             for m,c_ in enumerate(c):
                 if m <= n:
                     output += c_*sph_harm(m,n,theta,phi)
-        return np.exp(np.real(output))
+        return np.real(output)**2
 
 n_coefs = 5
 const_init = np.zeros((n_coefs+1)*n_coefs/2.)
@@ -171,7 +171,7 @@ def make_model(lon,lat,t,input_data,covariate_keys,pos,neg,lo_age=None,up_age=No
         
         vars_to_writeout.extend(['inc','ecc','amp','scale','scale_t','t_lim_corr','sin_frac'])
     
-        dd_coefs_unscaled = pm.Normal('dd_coefs_unscaled',np.zeros(n_coefs*(n_coefs+1.)/2.),np.ones(n_coefs*(n_coefs+1.)/2.),value=const_init*np.log(.5))
+        dd_coefs_unscaled = pm.Normal('dd_coefs_unscaled',np.zeros(n_coefs*(n_coefs+1.)/2.),np.ones(n_coefs*(n_coefs+1.)/2.),value=const_init*np.sqrt(.5))
         @pm.deterministic
         def diff_degree(ddc=dd_coefs_unscaled):
             coefs = (ddc*decay_vec)
