@@ -25,11 +25,43 @@ import warnings
 from agecorr import age_corr_likelihoods
 from mbgw import P_trace, S_trace, F_trace, a_pred
 from scipy import interpolate as interp
+from scipy.special import sph_harm
 import os, cPickle
 from pylab import csv2rec
 
 
-__all__ = ['make_model']
+__all__ = ['make_model', 'h', 'sph_eval']
+
+class sph_eval(object):
+    def __init__(self, coefs):
+        self.coefs = coefs
+    def __call__(self, x):
+        theta = x[:,0]
+        phi = x[:,1]
+        output = 0*theta
+        for n,c in enumerate(self.coefs):
+            for m,c_ in enumerate(c):
+                if m <= n:
+                    output += c_*sph_harm(m,n,theta,phi)
+        return np.exp(np.real(output))
+
+n_coefs = 5
+const_init = np.zeros((n_coefs+1)*n_coefs/2.)
+const_init[0]=1./0.28209479177387814
+
+const_init = const_init.ravel()
+
+decay_vec = 0*const_init
+i=0
+for n in xrange(n_coefs):
+    for m in xrange(n):
+        decay_vec[i]=1./(n+1)
+        i += 1
+        
+tril_ind = np.tril_indices(n_coefs)
+
+def h(x):
+    return np.ones(x.shape[:-1])
 
 continent = 'Africa'
 with_stukel = False
@@ -139,28 +171,24 @@ def make_model(lon,lat,t,input_data,covariate_keys,pos,neg,lo_age=None,up_age=No
         
         vars_to_writeout.extend(['inc','ecc','amp','scale','scale_t','t_lim_corr','sin_frac'])
     
-        def diff_degree(x):
-            return .5*np.ones(x.shape[:-1])
-        
-        def h(x):
-            return np.ones(x.shape[:-1])
+        dd_coefs_unscaled = pm.Normal('dd_coefs_unscaled',np.zeros(n_coefs*(n_coefs+1.)/2.),np.ones(n_coefs*(n_coefs+1.)/2.),value=const_init*np.log(.5))
+        @pm.deterministic
+        def diff_degree(ddc=dd_coefs_unscaled):
+            coefs = (ddc*decay_vec)
+            coefs_ = np.zeros((n_coefs,n_coefs))
+            coefs_[tril_ind] = coefs
+            return sph_eval(coefs_)
+    
+        print diff_degree.value(logp_mesh)
     
         # Create covariance and MV-normal F if model is spatial.   
         try:
-            # A constraint on the space-time covariance parameters that ensures temporal correlations are 
-            # always between -1 and 1.
-            @pm.potential
-            def st_constraint(sd=.5, sf=sin_frac, tlc=t_lim_corr):    
-                if -sd >= 1./(-sf*(1-tlc)+tlc):
-                    return -np.Inf
-                else:
-                    return 0.
 
             # A Deterministic valued as a Covariance object. Uses covariance nonstationary_spatiotemporal, defined above. 
             @pm.deterministic
-            def C(amp=amp,scale=scale,inc=inc,ecc=ecc,scale_t=scale_t, t_lim_corr=t_lim_corr, sin_frac=sin_frac, ra=ra):
+            def C(amp=amp,scale=scale,inc=inc,ecc=ecc,scale_t=scale_t, t_lim_corr=t_lim_corr, sin_frac=sin_frac, ra=ra, diff_degree=diff_degree):
                 eval_fun = CovarianceWithCovariates(nonstationary_spatiotemporal, input_data, covariate_keys, ui, fac=1.e4, ra=ra)
-                return pm.gp.FullRankCovariance(eval_fun, amp=amp, scale=scale, inc=inc, ecc=ecc, st=scale_t, diff_degree=diff_degree, h=h, t_gam_fun=gtf,
+                return pm.gp.FullRankCovariance(eval_fun, amp=amp, scale=scale, inc=inc, ecc=ecc, st=scale_t, diff_degree=diff_degree, h=h, t_gam_fun=default_t_gam_fun,
                                                 tlc=t_lim_corr, sf = sin_frac)
             
             # assert(np.all(C.value.eval_fun.meshes[0]==logp_mesh[:,:2]))
