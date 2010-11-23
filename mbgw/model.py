@@ -19,7 +19,7 @@ import pymc as pm
 import gc
 from map_utils import *
 from generic_mbg import *
-from st_cov_fun import *
+from nsst_cov_fun import *
 import generic_mbg
 import warnings
 from agecorr import age_corr_likelihoods
@@ -139,6 +139,12 @@ def make_model(lon,lat,t,input_data,covariate_keys,pos,neg,lo_age=None,up_age=No
         
         vars_to_writeout.extend(['inc','ecc','amp','scale','scale_t','t_lim_corr','sin_frac'])
     
+        def diff_degree(x):
+            return .5*np.ones(x.shape[:-1])
+        
+        def h(x):
+            return np.ones(x.shape[:-1])
+    
         # Create covariance and MV-normal F if model is spatial.   
         try:
             # A constraint on the space-time covariance parameters that ensures temporal correlations are 
@@ -150,11 +156,11 @@ def make_model(lon,lat,t,input_data,covariate_keys,pos,neg,lo_age=None,up_age=No
                 else:
                     return 0.
 
-            # A Deterministic valued as a Covariance object. Uses covariance my_st, defined above. 
+            # A Deterministic valued as a Covariance object. Uses covariance nonstationary_spatiotemporal, defined above. 
             @pm.deterministic
             def C(amp=amp,scale=scale,inc=inc,ecc=ecc,scale_t=scale_t, t_lim_corr=t_lim_corr, sin_frac=sin_frac, ra=ra):
-                eval_fun = CovarianceWithCovariates(my_st, input_data, covariate_keys, ui, fac=1.e4, ra=ra)
-                return pm.gp.FullRankCovariance(eval_fun, amp=amp, scale=scale, inc=inc, ecc=ecc, st=scale_t, sd=.5,
+                eval_fun = CovarianceWithCovariates(nonstationary_spatiotemporal, input_data, covariate_keys, ui, fac=1.e4, ra=ra)
+                return pm.gp.FullRankCovariance(eval_fun, amp=amp, scale=scale, inc=inc, ecc=ecc, st=scale_t, diff_degree=diff_degree, h=h, t_gam_fun=gtf,
                                                 tlc=t_lim_corr, sf = sin_frac)
             
             # assert(np.all(C.value.eval_fun.meshes[0]==logp_mesh[:,:2]))
