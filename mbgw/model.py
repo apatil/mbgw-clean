@@ -133,8 +133,6 @@ def make_model(lon,lat,t,input_data,covariate_keys,pos,neg,lo_age=None,up_age=No
     
         # Inverse-gamma prior on nugget variance V.
         V_coefs_unscaled, V = pos_sph_fun('V',1.,0.,1./.75)
-        from IPython.Debugger import Pdb
-        Pdb(color_scheme='LightBG').set_trace() 
         
         # Lock down parameters of Stukel's link function to obtain standard logit.
         # These can be freed by removing 'observed' flags, but mixing gets much worse.
@@ -172,7 +170,7 @@ def make_model(lon,lat,t,input_data,covariate_keys,pos,neg,lo_age=None,up_age=No
         sin_frac = pm.Uniform('sin_frac',0,1,value=.01)
         
         dd_coefs_unscaled, diff_degree = pos_sph_fun('diff_degree', .5, 0., 1./.75)
-        h_coefs_unscaled, h = pos_sph_fun('h',1, 0., 1./.75)
+        h_coefs_unscaled, h = pos_sph_fun('h', 1, 0., 1./.75)
             
         # Create covariance and MV-normal F if model is spatial.   
         try:
@@ -223,7 +221,8 @@ def make_model(lon,lat,t,input_data,covariate_keys,pos,neg,lo_age=None,up_age=No
     else:
         additional_index = 1
 
-    V_eval = V(logp_mesh[fi])
+    V_logp = V(logp_mesh)
+    V_data = V_logp[fi]
 
     for i in xrange(0,data_mesh.shape[0] / chunk + additional_index):
         
@@ -231,8 +230,8 @@ def make_model(lon,lat,t,input_data,covariate_keys,pos,neg,lo_age=None,up_age=No
         
         # epsilon plus f, given f.
         @pm.stochastic(trace=False, dtype=np.float)
-        def eps_p_f_now(value=val_now[this_slice], f=sp_sub.f_eval, V=V_eval[this_slice], sl=this_slice):
-            return pm.normal_like(value, f[fi][sl], 1./V)
+        def eps_p_f_now(value=val_now[this_slice], f=sp_sub.f_eval[fi], V=V_data[this_slice], sl=this_slice):
+            return pm.normal_like(value, f[sl], 1./V)
         eps_p_f_now.__name__ = "eps_p_f%i"%i
         eps_p_f_list.append(eps_p_f_now)
         
