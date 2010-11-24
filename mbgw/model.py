@@ -36,36 +36,33 @@ class sph_eval(object):
     def __init__(self, coefs):
         self.coefs = coefs
     def __call__(self, x):
-        output = sph.sph(x[:,:2],self.coefs)
+        output = sph.sph(x[:,:2],self.coefs/0.28209479)
         return np.exp(output)
-        
-    
-    
-n_coefs = 5
-const_init = np.zeros((n_coefs+1)*n_coefs/2.)
-const_init[0]=1./0.28209479177387814
 
-const_init = const_init.ravel()
+def pos_sph_fun(name, init_val, mu, tau, n_coefs=5):
 
-def pos_sph_fun(name, init_val):
-    coefs_unscaled = pm.Normal('%s_coefs_unscaled'%name,np.zeros(n_coefs*(n_coefs+1.)/2.),np.ones(n_coefs*(n_coefs+1.)/2.),value=np.log(const_init*init_val))
+    decay_vec = np.zeros((n_coefs+1.)*(n_coefs+2.)/2.)
+    i=0
+    for n in xrange(n_coefs+1):
+        for m in xrange(n+1):
+            decay_vec[i]=1./(n+1)
+            i += 1
+
+    tril_ind = np.tril_indices(n_coefs+1)
+    
+    mu = decay_vec*0+mu
+    tau = decay_vec*0+tau
+    init_val_ = decay_vec*0
+    init_val_[0] += np.log(init_val)
+    coefs_unscaled = pm.Normal('%s_coefs_unscaled'%name,mu,tau,value=init_val_)
 
     @pm.deterministic(name=name)
-    def sph_evaluator(c=coefs_unscaled):
+    def sph_evaluator(c=coefs_unscaled, tril_ind=tril_ind, n_coefs=n_coefs, decay_vec=decay_vec):
         coefs = (c*decay_vec)
-        coefs_ = np.zeros((n_coefs,n_coefs))
+        coefs_ = np.zeros((n_coefs+1,n_coefs+1))
         coefs_[tril_ind] = coefs
         return sph_eval(coefs_)
     return coefs_unscaled, sph_evaluator
-
-decay_vec = 0*const_init
-i=0
-for n in xrange(n_coefs):
-    for m in xrange(n):
-        decay_vec[i]=1./(n+1)
-        i += 1
-        
-tril_ind = np.tril_indices(n_coefs)
 
 def h(x):
     return np.ones(x.shape[:-1])
@@ -135,7 +132,9 @@ def make_model(lon,lat,t,input_data,covariate_keys,pos,neg,lo_age=None,up_age=No
             return pm.gp.Mean(pm.gp.zero_fn)
     
         # Inverse-gamma prior on nugget variance V.
-        V_coefs_unscaled, V = pos_sph_fun('V',.1)
+        V_coefs_unscaled, V = pos_sph_fun('V',1.,0.,1./.75)
+        from IPython.Debugger import Pdb
+        Pdb(color_scheme='LightBG').set_trace() 
         
         # Lock down parameters of Stukel's link function to obtain standard logit.
         # These can be freed by removing 'observed' flags, but mixing gets much worse.
@@ -172,8 +171,8 @@ def make_model(lon,lat,t,input_data,covariate_keys,pos,neg,lo_age=None,up_age=No
         # # Uniform prior on sinusoidal fraction in temporal variogram
         sin_frac = pm.Uniform('sin_frac',0,1,value=.01)
         
-        dd_coefs_unscaled, diff_degree = pos_sph_fun('diff_degree', .5)
-        h_coefs_unscaled, h = pos_sph_fun('h',1)
+        dd_coefs_unscaled, diff_degree = pos_sph_fun('diff_degree', .5, 0., 1./.75)
+        h_coefs_unscaled, h = pos_sph_fun('h',1, 0., 1./.75)
             
         # Create covariance and MV-normal F if model is spatial.   
         try:
@@ -223,14 +222,16 @@ def make_model(lon,lat,t,input_data,covariate_keys,pos,neg,lo_age=None,up_age=No
         additional_index = 0
     else:
         additional_index = 1
-    
+
+    V_eval = V(logp_mesh[fi])
+
     for i in xrange(0,data_mesh.shape[0] / chunk + additional_index):
         
         this_slice = slice(chunk*i, min((i+1)*chunk, data_mesh.shape[0]))
         
         # epsilon plus f, given f.
         @pm.stochastic(trace=False, dtype=np.float)
-        def eps_p_f_now(value=val_now[this_slice], f=sp_sub.f_eval, V=V(logp_mesh[this_slice]), sl=this_slice):
+        def eps_p_f_now(value=val_now[this_slice], f=sp_sub.f_eval, V=V_eval[this_slice], sl=this_slice):
             return pm.normal_like(value, f[fi][sl], 1./V)
         eps_p_f_now.__name__ = "eps_p_f%i"%i
         eps_p_f_list.append(eps_p_f_now)

@@ -175,7 +175,7 @@ def simdata_postproc(sp_sub, survey_plan):
 
 # Initialize step methods
 def mcmc_init(M):
-    M.use_step_method(GPEvaluationGibbs, M.sp_sub, M.V, M.eps_p_f, ti=M.ti)
+    M.use_step_method(GPEvaluationGibbs, M.sp_sub, M.V_eval, M.eps_p_f, ti=M.ti)
     def isscalar(s):
         return (s.dtype != np.dtype('object')) and (np.alen(s.value)==1) and (s not in M.eps_p_f_list)
     scalar_stochastics = filter(isscalar, M.stochastics)
@@ -202,15 +202,15 @@ def mcmc_init(M):
     # Use the adaptive Metropolis jumping strategy for the unscaled spherical harmonic coefficients
     # that induce nonstationarity in degree of differentiability, amplitude and nugget.
     # Also include the other spatial covariance parameters, as dependence is likely.
-    spatial_params = [M.dd_coefs_unscaled, M.h_coefs_unscaled, M.V_coefs_inscaled, M.log_scale, M.inc, M.sqrt_ecc]
+    spatial_params = [M.dd_coefs_unscaled, M.h_coefs_unscaled, M.V_coefs_unscaled, M.log_scale, M.inc, M.sqrt_ecc]
     init_scales = dict([(s,np.ones(np.shape(s.value))*.0001) for s in spatial_params])
-    M.use_step_method(pm.gp.GPParentAdaptiveMetropolis, spatial_params, scales=spatial_params)
+    M.use_step_method(pm.gp.GPParentAdaptiveMetropolis, spatial_params, scales=init_scales)
     
     # The following line sets the size of jumps before the first adaptation. If the chain is 'flatlining'
     # before 'delay' iterations have elapsed, it should be decreased. However, it should be as large as
     # possible while still allowing many jumps to be accepted.
     
-    M.step_method_dict[M.log_amp][0].proposal_sd *= .1
+    M.step_method_dict[M.log_scale][0].proposal_sd *= .1
 
 
 from model import *
