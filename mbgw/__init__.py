@@ -198,7 +198,14 @@ def mcmc_init(M):
     #
     # 'Interval' is the last parameter to fiddle; its effects can be hard to understand.
     M.use_step_method(pm.gp.GPParentAdaptiveMetropolis, scalar_stochastics, delay=50000, interval=500)
-    #
+
+    # Use the adaptive Metropolis jumping strategy for the unscaled spherical harmonic coefficients
+    # that induce nonstationarity in degree of differentiability, amplitude and nugget.
+    # Also include the other spatial covariance parameters, as dependence is likely.
+    spatial_params = [M.dd_coefs_unscaled, M.h_coefs_unscaled, M.V_coefs_inscaled, M.log_scale, M.inc, M.sqrt_ecc]
+    init_scales = dict([(s,np.ones(np.shape(s.value))*.0001) for s in spatial_params])
+    M.use_step_method(pm.gp.GPParentAdaptiveMetropolis, spatial_params, scales=spatial_params)
+    
     # The following line sets the size of jumps before the first adaptation. If the chain is 'flatlining'
     # before 'delay' iterations have elapsed, it should be decreased. However, it should be as large as
     # possible while still allowing many jumps to be accepted.

@@ -25,7 +25,7 @@ import warnings
 from agecorr import age_corr_likelihoods
 from mbgw import P_trace, S_trace, F_trace, a_pred
 from scipy import interpolate as interp
-from scipy.special import sph_harm
+import sph
 import os, cPickle
 from pylab import csv2rec
 
@@ -36,20 +36,27 @@ class sph_eval(object):
     def __init__(self, coefs):
         self.coefs = coefs
     def __call__(self, x):
-        theta = x[:,0]
-        phi = x[:,1]
-        output = 0*theta
-        for n,c in enumerate(self.coefs):
-            for m,c_ in enumerate(c):
-                if m <= n:
-                    output += c_*sph_harm(m,n,theta,phi)
-        return np.real(output)**2
-
+        output = sph.sph(x[:,:2],self.coefs)
+        return np.exp(output)
+        
+    
+    
 n_coefs = 5
 const_init = np.zeros((n_coefs+1)*n_coefs/2.)
 const_init[0]=1./0.28209479177387814
 
 const_init = const_init.ravel()
+
+def pos_sph_fun(name, init_val):
+    coefs_unscaled = pm.Normal('%s_coefs_unscaled'%name,np.zeros(n_coefs*(n_coefs+1.)/2.),np.ones(n_coefs*(n_coefs+1.)/2.),value=np.log(const_init*init_val))
+
+    @pm.deterministic(name=name)
+    def sph_evaluator(c=coefs_unscaled):
+        coefs = (c*decay_vec)
+        coefs_ = np.zeros((n_coefs,n_coefs))
+        coefs_[tril_ind] = coefs
+        return sph_eval(coefs_)
+    return coefs_unscaled, sph_evaluator
 
 decay_vec = 0*const_init
 i=0
@@ -128,11 +135,7 @@ def make_model(lon,lat,t,input_data,covariate_keys,pos,neg,lo_age=None,up_age=No
             return pm.gp.Mean(pm.gp.zero_fn)
     
         # Inverse-gamma prior on nugget variance V.
-        tau = pm.Gamma('tau', alpha=3, beta=3/.25, value=5)
-        V = pm.Lambda('V', lambda tau=tau:1./tau)
-        # V = pm.Exponential('V', .1, value=1.)
-    
-        vars_to_writeout = ['V', 'm_const', 't_coef']
+        V_coefs_unscaled, V = pos_sph_fun('V',.1)
         
         # Lock down parameters of Stukel's link function to obtain standard logit.
         # These can be freed by removing 'observed' flags, but mixing gets much worse.
@@ -152,8 +155,8 @@ def make_model(lon,lat,t,input_data,covariate_keys,pos,neg,lo_age=None,up_age=No
 
         # Subjective skew-normal prior on amp (the partial sill, tau) in log-space.
         # Parameters are passed in in manual_MCMC_supervisor.
-        log_amp = pm.SkewNormal('log_amp',value=amp_params['mu'],**amp_params)
-        amp = pm.Lambda('amp', lambda log_amp = log_amp: np.exp(log_amp))
+        # log_amp = pm.SkewNormal('log_amp',value=amp_params['mu'],**amp_params)
+        # amp = pm.Lambda('amp', lambda log_amp = log_amp: np.exp(log_amp))
 
         # Subjective skew-normal prior on scale (the range, phi_x) in log-space.
         log_scale = pm.SkewNormal('log_scale',value=-1,**scale_params)
@@ -169,24 +172,15 @@ def make_model(lon,lat,t,input_data,covariate_keys,pos,neg,lo_age=None,up_age=No
         # # Uniform prior on sinusoidal fraction in temporal variogram
         sin_frac = pm.Uniform('sin_frac',0,1,value=.01)
         
-        vars_to_writeout.extend(['inc','ecc','amp','scale','scale_t','t_lim_corr','sin_frac'])
-    
-        dd_coefs_unscaled = pm.Normal('dd_coefs_unscaled',np.zeros(n_coefs*(n_coefs+1.)/2.),np.ones(n_coefs*(n_coefs+1.)/2.),value=const_init*np.sqrt(.5))
-        @pm.deterministic
-        def diff_degree(ddc=dd_coefs_unscaled):
-            coefs = (ddc*decay_vec)
-            coefs_ = np.zeros((n_coefs,n_coefs))
-            coefs_[tril_ind] = coefs
-            return sph_eval(coefs_)
-    
-        print diff_degree.value(logp_mesh)
-    
+        dd_coefs_unscaled, diff_degree = pos_sph_fun('diff_degree', .5)
+        h_coefs_unscaled, h = pos_sph_fun('h',1)
+            
         # Create covariance and MV-normal F if model is spatial.   
         try:
 
             # A Deterministic valued as a Covariance object. Uses covariance nonstationary_spatiotemporal, defined above. 
             @pm.deterministic
-            def C(amp=amp,scale=scale,inc=inc,ecc=ecc,scale_t=scale_t, t_lim_corr=t_lim_corr, sin_frac=sin_frac, ra=ra, diff_degree=diff_degree):
+            def C(amp=1,scale=scale,inc=inc,ecc=ecc,scale_t=scale_t, t_lim_corr=t_lim_corr, sin_frac=sin_frac, ra=ra, diff_degree=diff_degree, h=h):
                 eval_fun = CovarianceWithCovariates(nonstationary_spatiotemporal, input_data, covariate_keys, ui, fac=1.e4, ra=ra)
                 return pm.gp.FullRankCovariance(eval_fun, amp=amp, scale=scale, inc=inc, ecc=ecc, st=scale_t, diff_degree=diff_degree, h=h, t_gam_fun=default_t_gam_fun,
                                                 tlc=t_lim_corr, sf = sin_frac)
@@ -233,10 +227,10 @@ def make_model(lon,lat,t,input_data,covariate_keys,pos,neg,lo_age=None,up_age=No
     for i in xrange(0,data_mesh.shape[0] / chunk + additional_index):
         
         this_slice = slice(chunk*i, min((i+1)*chunk, data_mesh.shape[0]))
-    
+        
         # epsilon plus f, given f.
         @pm.stochastic(trace=False, dtype=np.float)
-        def eps_p_f_now(value=val_now[this_slice], f=sp_sub.f_eval, V=V, sl=this_slice):
+        def eps_p_f_now(value=val_now[this_slice], f=sp_sub.f_eval, V=V(logp_mesh[this_slice]), sl=this_slice):
             return pm.normal_like(value, f[fi][sl], 1./V)
         eps_p_f_now.__name__ = "eps_p_f%i"%i
         eps_p_f_list.append(eps_p_f_now)
