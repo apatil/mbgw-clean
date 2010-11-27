@@ -38,6 +38,29 @@ class sph_eval(object):
     def __call__(self, x):
         output = sph.sph(x[:,:2],self.coefs/0.28209479)
         return np.exp(output)
+        
+class sin_eval(object):
+    def __init__(self, coefs, lx, ly):
+        self.coefs = coefs
+    def __call__(self, x):
+        output = sph.sin(x[:,:2],self.coefs,lx,ly)
+        return np.exp(output)
+        
+def pos_sin_fun(name, init_val, mu, tau, n_coefs=5):
+    decay_mat = 1./(np.add.outer(np.arange(n_coefs+1),np.arange(n_coefs+1))+1)
+    decay_vec = decay_mat.ravel()
+
+    tau = decay_vec*0+tau
+    init_val_ = decay_vec*0
+    init_val_[0] += np.log(init_val)
+    coefs_unscaled = pm.Normal('%s_coefs_unscaled'%name,mu,tau,value=init_val_)
+
+    @pm.deterministic(name=name)
+    def sin_evaluator(c=coefs_unscaled, n_coefs=n_coefs, decay_vec=decay_vec):
+        coefs = (c*decay_vec).reshape((n_coefs+1,n_coefs+1))
+        return sin_eval(coefs)
+    return coefs_unscaled, sin_evaluator
+
 
 def pos_sph_fun(name, init_val, mu, tau, n_coefs=5):
 
@@ -132,7 +155,7 @@ def make_model(lon,lat,t,input_data,covariate_keys,pos,neg,lo_age=None,up_age=No
             return pm.gp.Mean(pm.gp.zero_fn)
     
         # Inverse-gamma prior on nugget variance V.
-        V_coefs_unscaled, V = pos_sph_fun('V',1.,0.,1./.75)
+        V_coefs_unscaled, V = pos_sin_fun('V',1.,0.,1./.75)
         
         # Lock down parameters of Stukel's link function to obtain standard logit.
         # These can be freed by removing 'observed' flags, but mixing gets much worse.
@@ -169,8 +192,8 @@ def make_model(lon,lat,t,input_data,covariate_keys,pos,neg,lo_age=None,up_age=No
         # # Uniform prior on sinusoidal fraction in temporal variogram
         sin_frac = pm.Uniform('sin_frac',0,1,value=.01)
         
-        dd_coefs_unscaled, diff_degree = pos_sph_fun('diff_degree', .5, 0., 1./.75)
-        h_coefs_unscaled, h = pos_sph_fun('h', 1, 0., 1./.75)
+        dd_coefs_unscaled, diff_degree = pos_sin_fun('diff_degree', .5, 0., 1./.75)
+        h_coefs_unscaled, h = pos_sin_fun('h', 1, 0., 1./.75)
             
         # Create covariance and MV-normal F if model is spatial.   
         try:

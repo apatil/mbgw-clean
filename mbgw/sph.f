@@ -145,3 +145,34 @@ cf2py intent(hide) nx, m, n
       end do
       RETURN
       END
+
+
+      SUBROUTINE sin(x, coefs, lx, ly m, n, nx, output)
+cf2py intent(out) output
+cf2py intent(hide) nx, m, n
+      DOUBLE PRECISION x(nx,2), output(nx), coefs(n+1,m+1)
+      DOUBLE PRECISION inci, incj, lx, ly
+      INTEGER i,j,k
+      DOUBLE PRECISION pi
+      PARAMETER (pi=3.141592653589793238462643d0)               
+      
+      do k=1,nx
+          output(k)=0.0D0
+          do j=0,m
+              if (mod(j,2).EQ.0) then
+                  incj = dcos(j/2*pi*x(2)/ly)
+              else
+                  incj = dsin((j+1)/2*pi*x(2)/ly)
+              end if
+              do i=0,n
+                  if (mod(j,2).EQ.0) then
+                      inci = dcos(i/2*pi*x(1)/lx)
+                  else
+                      inci = dsin((i+1)/2*pi*x(1)/lx)
+                  end if
+                  output(k) = output(k)+coefs(i+1,j+1)*inci*incj
+              end do
+          end do
+      end do
+      RETURN
+      END
